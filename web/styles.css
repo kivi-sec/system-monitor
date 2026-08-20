@@ -1,0 +1,114 @@
+@import url('https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&family=JetBrains+Mono:wght@400;500&display=swap');
+
+html, body {
+  font-family: 'Inter', ui-sans-serif, system-ui, sans-serif;
+}
+
+* {
+  scrollbar-width: thin;
+  scrollbar-color: #232734 transparent;
+}
+*::-webkit-scrollbar { width: 6px; height: 6px; }
+*::-webkit-scrollbar-thumb { background: #232734; border-radius: 4px; }
+
+.card {
+  background-color: #12151c;
+  border: 1px solid #232734;
+  border-radius: 14px;
+  padding: 16px;
+  transition: border-color 0.2s ease, box-shadow 0.2s ease;
+}
+.card:hover {
+  border-color: #2d3341;
+}
+
+.card-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  margin-bottom: 4px;
+}
+
+.card-title {
+  font-size: 12px;
+  font-weight: 600;
+  letter-spacing: 0.03em;
+  text-transform: uppercase;
+  color: #94a3b8;
+}
+
+.card-value {
+  font-family: 'JetBrains Mono', ui-monospace, monospace;
+  font-size: 22px;
+  font-weight: 600;
+  color: #f1f5f9;
+}
+
+.card-foot {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  font-size: 11px;
+  color: #64748b;
+  font-family: 'JetBrains Mono', ui-monospace, monospace;
+  padding-top: 6px;
+}
+
+/* Live-updating number ticks */
+.card-value, td.mono-num {
+  font-variant-numeric: tabular-nums;
+}
+
+td, th { font-family: 'Inter', sans-serif; }
+td.font-mono, .font-mono { font-family: 'JetBrains Mono', ui-monospace, monospace; }
+
+/* Toasts */
+.toast {
+  min-width: 240px;
+  max-width: 340px;
+  background: #171b24;
+  border: 1px solid #232734;
+  border-radius: 10px;
+  padding: 10px 14px;
+  font-size: 12px;
+  color: #e2e8f0;
+  box-shadow: 0 10px 30px -10px rgba(0,0,0,0.6);
+  animation: toast-in 0.25s ease-out;
+  display: flex;
+  align-items: flex-start;
+  gap: 8px;
+}
+.toast.leaving {
+  animation: toast-out 0.2s ease-in forwards;
+}
+@keyframes toast-in {
+  from { opacity: 0; transform: translateY(8px) scale(0.98); }
+  to { opacity: 1; transform: translateY(0) scale(1); }
+}
+@keyframes toast-out {
+  to { opacity: 0; transform: translateX(20px); }
+}
+
+/* Row highlight for high resource usage */
+.proc-row-hot {
+  background: rgba(248, 113, 113, 0.06);
+}
+.proc-row-warm {
+  background: rgba(251, 191, 36, 0.05);
+}
+
+/* Connection status pulse */
+.pulse-good { box-shadow: 0 0 0 0 rgba(52, 211, 153, 0.6); animation: pulse-good 1.8s infinite; }
+@keyframes pulse-good {
+  0% { box-shadow: 0 0 0 0 rgba(52, 211, 153, 0.5); }
+  70% { box-shadow: 0 0 0 6px rgba(52, 211, 153, 0); }
+  100% { box-shadow: 0 0 0 0 rgba(52, 211, 153, 0); }
+}
+
+/* Table row transitions */
+#proc-tbody tr {
+  transition: background-color 0.2s ease;
+}
+#proc-tbody tr:hover {
+  background-color: #171b24;
+}
