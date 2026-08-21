@@ -6,12 +6,14 @@ package main
 
 import (
 	"context"
+	"fmt"
 	"io/fs"
 	"log"
 	"net/http"
 	"os"
 	"os/signal"
 	"strconv"
+	"sync"
 	"syscall"
 	"time"
 
@@ -30,14 +32,27 @@ type config struct {
 	DiskPath       string
 }
 
-func loadConfig() config {
+func loadConfig() (config, error) {
 	cfg := config{
 		Host:           getEnv("HOST", "127.0.0.1"),
 		Port:           getEnv("PORT", "8080"),
 		UpdateInterval: getEnvDuration("UPDATE_INTERVAL", time.Second),
 		DiskPath:       getEnv("DISK_PATH", "/"),
 	}
-	return cfg
+
+	if _, err := strconv.Atoi(cfg.Port); err != nil {
+		return cfg, fmt.Errorf("invalid PORT %q: must be numeric: %w", cfg.Port, err)
+	}
+	if info, err := os.Stat(cfg.DiskPath); err != nil {
+		return cfg, fmt.Errorf("invalid DISK_PATH %q: %w", cfg.DiskPath, err)
+	} else if !info.IsDir() {
+		return cfg, fmt.Errorf("invalid DISK_PATH %q: not a directory", cfg.DiskPath)
+	}
+	if cfg.UpdateInterval <= 0 {
+		return cfg, fmt.Errorf("invalid UPDATE_INTERVAL: must be positive, got %s", cfg.UpdateInterval)
+	}
+
+	return cfg, nil
 }
 
 func getEnv(key, fallback string) string {
@@ -59,12 +74,15 @@ func getEnvDuration(key string, fallback time.Duration) time.Duration {
 	if secs, err := strconv.Atoi(v); err == nil {
 		return time.Duration(secs) * time.Second
 	}
-	log.Printf("warning: could not parse UPDATE_INTERVAL=%q, using default %s", v, fallback)
+	log.Printf("warning: could not parse %s=%q, using default %s", key, v, fallback)
 	return fallback
 }
 
 func main() {
-	cfg := loadConfig()
+	cfg, err := loadConfig()
+	if err != nil {
+		log.Fatalf("invalid configuration: %v", err)
+	}
 
 	gin.SetMode(gin.ReleaseMode)
 	router := gin.New()
@@ -94,33 +112,52 @@ func main() {
 
 	// The collector runs in its own goroutine and pushes every sample
 	// straight to the websocket hub for broadcast; it never blocks HTTP
-	// handling.
-	go metricsCollector.Run(ctx, func(m collector.Metrics) {
-		hub.Broadcast(m)
-	})
+	// handling. wg lets main wait for it to actually finish before exiting.
+	var wg sync.WaitGroup
+	wg.Add(1)
+	go func() {
+		defer wg.Done()
+		metricsCollector.Run(ctx, func(m collector.Metrics) {
+			hub.Broadcast(m)
+		})
+	}()
 
 	addr := cfg.Host + ":" + cfg.Port
 	httpServer := &http.Server{
 		Addr:              addr,
 		Handler:           router,
 		ReadHeaderTimeout: 10 * time.Second,
+		WriteTimeout:      15 * time.Second,
+		IdleTimeout:       60 * time.Second,
 	}
 
+	serverErr := make(chan error, 1)
 	go func() {
 		log.Printf("System Monitor listening on http://%s (update interval: %s)", addr, cfg.UpdateInterval)
 		if err := httpServer.ListenAndServe(); err != nil && err != http.ErrServerClosed {
-			log.Fatalf("server error: %v", err)
+			serverErr <- err
 		}
+		close(serverErr)
 	}()
 
-	<-ctx.Done()
-	log.Println("shutting down...")
+	select {
+	case <-ctx.Done():
+		log.Println("shutting down...")
+	case err := <-serverErr:
+		if err != nil {
+			log.Printf("server error: %v", err)
+		}
+	}
 
 	shutdownCtx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 	defer cancel()
 	if err := httpServer.Shutdown(shutdownCtx); err != nil {
 		log.Printf("graceful shutdown failed: %v", err)
 	}
+
+	stop() // ensure the collector's context is cancelled even if we got here via serverErr
+	wg.Wait()
+
 	log.Println("shutdown complete")
 }
 

@@ -5,6 +5,7 @@
 package api
 
 import (
+	"log"
 	"net/http"
 	"time"
 
@@ -35,13 +36,13 @@ func NewServer(c *collector.Collector, hub *websocket.Hub) *Server {
 func (s *Server) RegisterRoutes(r *gin.Engine) {
 	r.GET("/ws", s.handleWS)
 
-	api := r.Group("/api")
+	apiGroup := r.Group("/api")
 	{
-		api.GET("/system", s.handleSystem)
-		api.GET("/processes", s.handleProcesses)
-		api.POST("/process/terminate", s.handleTerminate)
-		api.GET("/health", s.handleHealth)
-		api.GET("/info", s.handleInfo)
+		apiGroup.GET("/system", s.handleSystem)
+		apiGroup.GET("/processes", s.handleProcesses)
+		apiGroup.POST("/process/terminate", s.handleTerminate)
+		apiGroup.GET("/health", s.handleHealth)
+		apiGroup.GET("/info", s.handleInfo)
 	}
 }
 
@@ -49,6 +50,7 @@ func (s *Server) handleWS(c *gin.Context) {
 	if err := s.Hub.ServeWS(c.Writer, c.Request); err != nil {
 		// Upgrade failures happen for mundane reasons (e.g. a plain HTTP
 		// GET to /ws from a browser address bar) - log lightly, don't 500.
+		log.Printf("ws upgrade failed for %s: %v", c.ClientIP(), err)
 		c.Status(http.StatusBadRequest)
 	}
 }
@@ -57,7 +59,16 @@ func (s *Server) handleWS(c *gin.Context) {
 // broadcast over the websocket - for clients that just want a one-shot
 // poll instead of a live connection.
 func (s *Server) handleSystem(c *gin.Context) {
-	c.JSON(http.StatusOK, s.Collector.Latest())
+	latest := s.Collector.Latest()
+	if latest.CollectedAt.IsZero() {
+		// Collector hasn't produced its first sample yet (e.g. hit right
+		// after startup). Distinguish "no data yet" from "empty data".
+		c.JSON(http.StatusServiceUnavailable, gin.H{
+			"message": "metrics not yet available, try again shortly",
+		})
+		return
+	}
+	c.JSON(http.StatusOK, latest)
 }
 
 func (s *Server) handleProcesses(c *gin.Context) {
@@ -70,12 +81,27 @@ type terminateRequest struct {
 	PID int32 `json:"pid" binding:"required"`
 }
 
+// Termination of PID 0 or 1 (or negative "process group" PIDs on POSIX)
+// is never something this endpoint should allow - those are footguns,
+// not legitimate targets for a "kill one process" dashboard action.
+func isTerminatable(pid int32) bool {
+	return pid > 1
+}
+
 func (s *Server) handleTerminate(c *gin.Context) {
 	var req terminateRequest
 	if err := c.ShouldBindJSON(&req); err != nil {
 		c.JSON(http.StatusBadRequest, gin.H{
 			"success": false,
 			"message": "invalid request body: pid (integer) is required",
+		})
+		return
+	}
+
+	if !isTerminatable(req.PID) {
+		c.JSON(http.StatusBadRequest, gin.H{
+			"success": false,
+			"message": "refusing to terminate reserved or invalid pid",
 		})
 		return
 	}
@@ -99,7 +125,7 @@ func (s *Server) handleHealth(c *gin.Context) {
 func (s *Server) handleInfo(c *gin.Context) {
 	latest := s.Collector.Latest()
 	c.JSON(http.StatusOK, gin.H{
-		"system":  latest.System,
-		"server":  gin.H{"startedAt": s.StartedAt},
+		"system": latest.System,
+		"server": gin.H{"startedAt": s.StartedAt},
 	})
 }
